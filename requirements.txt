@@ -1,3 +1,4 @@
+duckdb>=1.0
 statsbombpy>=1.13
 mplsoccer>=1.4
 pandas>=2.0

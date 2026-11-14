@@ -1,4 +1,7 @@
-"""Figures: shot map, cumulative goals vs xG, squad goals-vs-xG comparison."""
+"""Figures: shot map, cumulative goals vs xG, squad goals-vs-xG comparison.
+
+Every function takes the DataFrame returned by one of the queries in sql/;
+no football calculations happen here, only drawing."""
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -19,23 +22,11 @@ plt.rcParams.update({
 })
 
 
-def summary(shots: pd.DataFrame) -> dict:
-    np_shots = shots[~shots["is_penalty"]]
-    return {
-        "Shots": len(shots),
-        "Goals": int(shots["is_goal"].sum()),
-        "xG": shots["shot_statsbomb_xg"].sum(),
-        "NP goals": int(np_shots["is_goal"].sum()),
-        "npxG": np_shots["shot_statsbomb_xg"].sum(),
-        "npxG / shot": np_shots["shot_statsbomb_xg"].mean(),
-        "Avg distance (m)": np_shots["distance"].mean() * 0.9144,  # yards -> m
-        "On target %": 100 * shots["shot_outcome"].isin(
-            ["Goal", "Saved", "Saved to Post"]).mean(),
-    }
+def shot_map(shots: pd.DataFrame, s: pd.Series, player: str, subtitle: str, path):
+    """Half-pitch shot map: marker size = xG, filled = goal, hollow = no goal.
 
-
-def shot_map(shots: pd.DataFrame, player: str, subtitle: str, path):
-    """Half-pitch shot map: marker size = xG, filled = goal, hollow = no goal."""
+    shots: output of 02_player_shots.sql; s: the single row of 03_player_summary.sql.
+    """
     pitch = VerticalPitch(pitch_type="statsbomb", half=True, pad_bottom=-25,
                           pitch_color=SURFACE, line_color=MUTED, linewidth=1)
     fig, ax = pitch.draw(figsize=(9, 7.2))
@@ -43,7 +34,7 @@ def shot_map(shots: pd.DataFrame, player: str, subtitle: str, path):
 
     misses = shots[~shots["is_goal"]]
     goals = shots[shots["is_goal"]]
-    size = lambda s: 60 + 1400 * s["shot_statsbomb_xg"]
+    size = lambda d: 60 + 1400 * d["xg"]
     pitch.scatter(misses["x"], misses["y"], s=size(misses), ax=ax,
                   facecolors="none", edgecolors=INK_2, linewidths=1, alpha=0.7,
                   label="No goal", zorder=2)
@@ -54,10 +45,9 @@ def shot_map(shots: pd.DataFrame, player: str, subtitle: str, path):
     fig.text(0.08, 0.935, player, fontsize=20, weight="bold")
     fig.text(0.08, 0.885, subtitle, fontsize=12, color=INK_2)
 
-    s = summary(shots)
-    stats = [("Shots", f"{s['Shots']}"), ("Goals", f"{s['Goals']}"),
-             ("xG", f"{s['xG']:.1f}"), ("npxG / shot", f"{s['npxG / shot']:.2f}"),
-             ("Avg dist.", f"{s['Avg distance (m)']:.1f} m")]
+    stats = [("Shots", f"{int(s['shots'])}"), ("Goals", f"{int(s['goals'])}"),
+             ("xG", f"{s['xg']:.1f}"), ("npxG / shot", f"{s['npxg_per_shot']:.2f}"),
+             ("Avg dist.", f"{s['avg_distance_m']:.1f} m")]
     for i, (label, val) in enumerate(stats):
         x = 0.12 + i * 0.19
         fig.text(x, 0.105, val, fontsize=18, weight="bold", ha="center")
@@ -73,30 +63,22 @@ def shot_map(shots: pd.DataFrame, player: str, subtitle: str, path):
     plt.close(fig)
 
 
-def cumulative_xg(shots: pd.DataFrame, all_shots: pd.DataFrame, team: str,
-                  player: str, path, annotate: dict | None = None):
-    """Running non-penalty goals vs npxG across every team matchday (1..N)."""
-    matches = (all_shots.loc[all_shots["team"] == team, ["match_id", "match_date"]]
-               .drop_duplicates().sort_values("match_date").reset_index(drop=True))
-    matches["matchday"] = matches.index + 1
-    np_shots = shots[~shots["is_penalty"]]
-    per = (np_shots.groupby("match_id")
-           .agg(goals=("is_goal", "sum"), xg=("shot_statsbomb_xg", "sum")))
-    m = matches.merge(per, on="match_id", how="left").fillna({"goals": 0, "xg": 0})
-    # pad one step past the last matchday so its jump is drawn as a full step
-    days = np.concatenate([[0], m["matchday"], [m["matchday"].iloc[-1] + 1]])
-    g = np.concatenate([[0], m["goals"].cumsum(), [m["goals"].sum()]])
-    x = np.concatenate([[0], m["xg"].cumsum(), [m["xg"].sum()]])
+def cumulative_xg(cum: pd.DataFrame, player: str, path, note: dict | None = None):
+    """Running non-penalty goals vs npxG. cum: output of 05_cumulative_by_matchday.sql."""
+    # start at matchday 0 and pad one step past the end so the last jump is drawn in full
+    end = int(cum["matchday"].max())
+    days = np.concatenate([[0], cum["matchday"], [end + 1]])
+    g = np.concatenate([[0], cum["cum_np_goals"], [cum["cum_np_goals"].iloc[-1]]])
+    x = np.concatenate([[0], cum["cum_npxg"], [cum["cum_npxg"].iloc[-1]]])
 
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.step(days, g, where="post", color=GOAL, lw=2, label="Non-penalty goals")
     ax.step(days, x, where="post", color=XG, lw=2, label="npxG")
-    end = days[-2]
     ax.text(end + 1.5, g[-1], f"{int(g[-1])} NP goals", va="center", fontsize=10)
     ax.text(end + 1.5, x[-1], f"{x[-1]:.1f} npxG", va="center", fontsize=10)
-    if annotate:
-        md = int(m.loc[m["match_id"] == annotate["match_id"], "matchday"].iloc[0])
-        ax.annotate(annotate["text"], xy=(md, g[md]), xytext=(md - 13, g[md] + 0.6),
+    if note:
+        md = int(cum.loc[cum["match_id"] == note["match_id"], "matchday"].iloc[0])
+        ax.annotate(note["text"], xy=(md, g[md]), xytext=(md - 13, g[md] + 0.6),
                     fontsize=9, color=INK_2,
                     arrowprops=dict(arrowstyle="-", color=MUTED, lw=0.8))
     ax.set_xlabel("Bundesliga matchday")
@@ -114,16 +96,10 @@ def cumulative_xg(shots: pd.DataFrame, all_shots: pd.DataFrame, team: str,
     plt.close(fig)
 
 
-def squad_comparison(shots: pd.DataFrame, team: str, highlight: str, path,
+def squad_comparison(g: pd.DataFrame, team: str, highlight: str, path,
                      min_shots: int = 15):
-    """Scatter of npxG vs NP goals for every player with >= min_shots shots."""
-    np_shots = shots[(shots["team"] == team) & (~shots["is_penalty"])]
-    g = (np_shots.groupby("player")
-         .agg(shots=("is_goal", "size"), goals=("is_goal", "sum"),
-              xg=("shot_statsbomb_xg", "sum"),
-              # each shot ~ Bernoulli(xG): Var(goals) = sum xG(1 - xG)
-              sd=("shot_statsbomb_xg", lambda q: np.sqrt((q * (1 - q)).sum()))))
-    g = g[g["shots"] >= min_shots]
+    """Scatter of npxG vs NP goals. g: output of 06_squad_finishing.sql."""
+    g = g.set_index("player").rename(columns={"npxg": "xg", "np_goals": "goals"})
 
     fig, ax = plt.subplots(figsize=(9, 7))
     lim = max(g["xg"].max(), g["goals"].max()) + 2
@@ -161,6 +137,3 @@ def squad_comparison(shots: pd.DataFrame, team: str, highlight: str, path,
     fig.tight_layout()
     fig.savefig(path, dpi=200)
     plt.close(fig)
-    g["diff"] = g["goals"] - g["xg"]
-    g["z"] = g["diff"] / g["sd"]   # over/under-performance in standard deviations
-    return g.sort_values("xg", ascending=False)

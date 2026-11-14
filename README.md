@@ -6,7 +6,8 @@ finished better or worse than the quality of their chances suggests**, with
 Florian Wirtz as the main case study.
 
 It's the first project in a football analytics portfolio series, covering
-event-data parsing, expected goals (xG), and clear football visualisation.
+**SQL on football event data (DuckDB)**, expected goals (xG), basic statistical testing,
+and clear football visualisation.
 
 ![Florian Wirtz shot map](figures/florian_wirtz_shot_map.png)
 
@@ -26,6 +27,44 @@ event-data parsing, expected goals (xG), and clear football visualisation.
 - **Penalties** are excluded from "non-penalty" (NP) metrics. A penalty is worth ~0.78 xG and says
   little about a player's finishing.
 - Pitch coordinates are StatsBomb's 120 × 80 yard grid. Distances are converted to metres.
+
+## How it's built: SQL first
+
+The raw data is loaded into a **DuckDB** database (`data/statsbomb.duckdb`) with two tables,
+`matches` and `shots`. **Every number in this README is a SQL query** in [`sql/`](sql/).
+Python only downloads the data and draws the charts.
+
+| Query | What it does | SQL used |
+|---|---|---|
+| `01_shot_features` | Joins shots to matches; adds goal/penalty/box flags, distance and shot angle | `JOIN`, `CASE`, trig functions |
+| `03_player_summary` | Shots, goals, xG, npxG, xG/shot, distance, % on target | `FILTER` aggregates |
+| `04_player_zones` | Inside vs outside the box | `GROUP BY`, window share-of-total |
+| `05_cumulative_by_matchday` | Running goals vs xG over all 34 matchdays | CTEs, `LEFT JOIN`, `ROW_NUMBER`, running `SUM() OVER` |
+| `06_squad_finishing` | Goals − xG, standard deviation and z-score per player | CTE, `RANK() OVER` |
+| `07_xg_calibration` | Mean xG vs actual conversion by distance band | `CASE` bucketing |
+| `08_shot_type_breakdown`, `09_best_single_match` | Free kicks vs open play; best scoring game | `GROUP BY`, `ORDER BY ... LIMIT` |
+
+For example, the luck check from finding 3 is a single query:
+
+```sql
+WITH per_player AS (
+    SELECT player,
+           count(*)                        AS shots,
+           count(*) FILTER (WHERE is_goal) AS np_goals,
+           sum(xg)                         AS npxg,
+           sqrt(sum(xg * (1 - xg)))        AS sd      -- each shot ~ Bernoulli(xG)
+    FROM shot_features
+    WHERE team = $team AND NOT is_penalty
+    GROUP BY player
+)
+SELECT player, shots, np_goals, npxg,
+       np_goals - npxg                         AS goals_minus_xg,
+       (np_goals - npxg) / sd                  AS z_score,
+       rank() OVER (ORDER BY np_goals - npxg DESC) AS overperformance_rank
+FROM per_player
+WHERE shots >= $min_shots
+ORDER BY npxg DESC;
+```
 
 ## Key findings
 
@@ -72,12 +111,15 @@ game in which Leverkusen clinched the title.
 
 ```
 ├── run.py                 # generate all figures + summary tables for any player
+├── sql/                   # all analysis logic, one query per file (01-09)
 ├── src/
-│   ├── data.py            # download/cache StatsBomb shots, feature engineering
-│   └── plots.py           # shot map, cumulative xG, squad comparison
+│   ├── database.py        # download StatsBomb data into DuckDB (matches, shots tables)
+│   ├── queries.py         # runs sql/*.sql with named parameters -> DataFrames
+│   └── plots.py           # shot map, cumulative xG, squad comparison (drawing only)
 ├── notebooks/
-│   └── 01_shot_analysis.ipynb   # walkthrough with the analysis above
-├── data/                  # cached shot data (included, so it runs offline)
+│   └── 01_shot_analysis.ipynb   # walkthrough showing each query and its result
+├── data/
+│   └── statsbomb.duckdb   # the database (0.8 MB, included so it runs offline)
 └── figures/
 ```
 
@@ -89,9 +131,19 @@ python run.py                                   # Florian Wirtz (default)
 python run.py --player "Victor Okoh Boniface"   # any Leverkusen player
 ```
 
-Requires Python 3.10+. The shots are cached in `data/`. Delete that file to re-download all 34
-matches from StatsBomb's GitHub (about a minute). If you mistype a name, the script lists every
+Requires Python 3.10+. The database is included. Run `python run.py --rebuild` to re-download all
+34 matches from StatsBomb's GitHub (about a minute). If you mistype a name, the script lists every
 player available.
+
+You can also query the database directly, from Python or the [DuckDB CLI](https://duckdb.org/docs/installation/):
+
+```python
+import duckdb
+con = duckdb.connect("data/statsbomb.duckdb", read_only=True)
+con.sql(open("sql/01_shot_features.sql").read())          # create the shot_features view
+con.sql("SELECT player, count(*) AS shots, sum(xg) AS xg FROM shot_features "
+        "WHERE team = 'Bayer Leverkusen' GROUP BY player ORDER BY xg DESC LIMIT 5")
+```
 
 ## Limitations and next steps
 
@@ -104,4 +156,4 @@ player available.
 
 ---
 Data: [StatsBomb Open Data](https://github.com/statsbomb/open-data). Built with
-[`statsbombpy`](https://github.com/statsbomb/statsbombpy) and [`mplsoccer`](https://mplsoccer.readthedocs.io).
+[DuckDB](https://duckdb.org), [`statsbombpy`](https://github.com/statsbomb/statsbombpy) and [`mplsoccer`](https://mplsoccer.readthedocs.io).
