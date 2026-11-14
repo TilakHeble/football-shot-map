@@ -43,6 +43,7 @@ Python only downloads the data and draws the charts.
 | `06_squad_finishing` | Goals − xG, standard deviation and z-score per player | CTE, `RANK() OVER` |
 | `07_xg_calibration` | Mean xG vs actual conversion by distance band | `CASE` bucketing |
 | `08_shot_type_breakdown`, `09_best_single_match` | Free kicks vs open play; best scoring game | `GROUP BY`, `ORDER BY ... LIMIT` |
+| `10_tableau_shots` | Flat shot table with Leverkusen matchday numbers for Tableau | CTE, `ROW_NUMBER`, type casts |
 
 For example, the luck check from finding 3 is a single query:
 
@@ -107,15 +108,39 @@ game in which Leverkusen clinched the title.
   worth a closer look but not proof of elite finishing from one season. Expect some
   regression toward xG.
 
+## Dashboards
+
+### Interactive Streamlit app
+
+Pick any Leverkusen player and get their KPIs, an interactive shot map (hover any shot for opponent,
+minute, xG and outcome), goals vs xG through the season, box and shot-type breakdowns, and the squad
+finishing chart with z-scores. Every number comes from the same SQL queries.
+
+![Streamlit dashboard](figures/dashboard_streamlit.png)
+
+```bash
+streamlit run app.py
+```
+
+### Tableau
+
+[`tableau/`](tableau/) contains a Tableau-ready shots file (exported by `sql/10_tableau_shots.sql`),
+a pitch background image with exact coordinates, and a [step-by-step build guide](tableau/TABLEAU_GUIDE.md)
+covering calculated fields, parameters, a running-total table calculation and a dashboard layout.
+
 ## Project structure
 
 ```
+├── app.py                 # Streamlit dashboard
 ├── run.py                 # generate all figures + summary tables for any player
-├── sql/                   # all analysis logic, one query per file (01-09)
+├── sql/                   # all analysis logic, one query per file (01-10)
 ├── src/
 │   ├── database.py        # download StatsBomb data into DuckDB (matches, shots tables)
 │   ├── queries.py         # runs sql/*.sql with named parameters -> DataFrames
-│   └── plots.py           # shot map, cumulative xG, squad comparison (drawing only)
+│   ├── plots.py           # static charts for the README (matplotlib/mplsoccer)
+│   ├── interactive.py     # interactive charts for the dashboard (Plotly)
+│   └── export_tableau.py  # writes the Tableau CSV + pitch image
+├── tableau/               # Tableau data, pitch background, build guide
 ├── notebooks/
 │   └── 01_shot_analysis.ipynb   # walkthrough showing each query and its result
 ├── data/
@@ -129,6 +154,8 @@ game in which Leverkusen clinched the title.
 pip install -r requirements.txt
 python run.py                                   # Florian Wirtz (default)
 python run.py --player "Victor Okoh Boniface"   # any Leverkusen player
+streamlit run app.py                            # interactive dashboard
+python -m src.export_tableau                    # regenerate the Tableau files
 ```
 
 Requires Python 3.10+. The database is included. Run `python run.py --rebuild` to re-download all
