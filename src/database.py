@@ -9,9 +9,6 @@ import warnings
 
 import duckdb
 import pandas as pd
-from statsbombpy import sb
-
-warnings.filterwarnings("ignore", module="statsbombpy")
 
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "data" / "statsbomb.duckdb"
@@ -20,6 +17,9 @@ DB_PATH = ROOT / "data" / "statsbomb.duckdb"
 def build_database(competition_id: int = 9, season_id: int = 281,
                    db_path: Path = DB_PATH) -> Path:
     """Download one competition-season and (re)write the matches and shots tables."""
+    from statsbombpy import sb   # only needed when downloading
+    warnings.filterwarnings("ignore", module="statsbombpy")
+
     matches = sb.matches(competition_id=competition_id, season_id=season_id)
     matches = matches[["match_id", "match_date", "home_team", "away_team",
                        "home_score", "away_score"]].copy()

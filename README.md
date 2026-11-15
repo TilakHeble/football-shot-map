@@ -151,7 +151,7 @@ covering calculated fields, parameters, a running-total table calculation and a 
 ## How to run
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt        # add requirements-dev.txt for the notebook
 python run.py                                   # Florian Wirtz (default)
 python run.py --player "Victor Okoh Boniface"   # any Leverkusen player
 streamlit run app.py                            # interactive dashboard
